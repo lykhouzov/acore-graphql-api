@@ -4,19 +4,24 @@ use actix_web::{
 use async_graphql::{http::GraphiQLSource, Data, Schema};
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use auth::account::{AccountSchema, QueryRoot, SubscriptionRoot};
+use config::Config;
 use log::info;
 
 use crate::auth::{account::MutationRoot, db::get_storage};
 
 mod auth;
+pub mod config;
 
-async fn graphiql() -> HttpResponse {
+async fn graphiql(config: web::Data<Config>) -> HttpResponse {
+    let endpoint = format!("http://{}:{}", config.host(), config.port());
+    let endpoint_sub = format!("http://{}:{}/ws", config.host(), config.port());
+
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(
             GraphiQLSource::build()
-                .endpoint("http://localhost:8000")
-                .subscription_endpoint("ws://localhost:8000/ws")
+                .endpoint(endpoint.as_str())
+                .subscription_endpoint(endpoint_sub.as_str())
                 .finish(),
         )
 }
@@ -54,26 +59,22 @@ async fn index_ws(
         // .on_connection_init(on_connection_init)
         .start(&req, payload)
 }
-const DEFAULT_HOST: &'static str = "127.0.0.1";
-const DEFAUTL_PORT: u16 = 8000;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let _ = dotenv::dotenv().ok();
-    let server_host = std::env::var("SERVER_HOST").unwrap_or_else(|_| DEFAULT_HOST.to_string());
-    let server_port = std::env::var("SERVER_PORT").map_or_else(
-        |_| DEFAUTL_PORT,
-        |v| v.parse::<u16>().unwrap_or(DEFAUTL_PORT),
-    );
+    // let config = Config::from_env();
+    let config = web::Data::new(Config::from_env());
     env_logger::init();
     let schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(get_storage().await)
         .finish();
 
-    info!("GraphiQL IDE: http://{}:{}", server_host, server_port);
-
+    info!("GraphiQL IDE: http://{}:{}", config.host(), config.port());
+    let (server_host, server_port) = { (config.host(), config.port()) };
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(schema.clone()))
+            .app_data(config.clone())
             .service(web::resource("/").guard(guard::Get()).to(graphiql))
             .service(web::resource("/").guard(guard::Post()).to(index))
             .service(web::resource("/ws").to(index_ws))
