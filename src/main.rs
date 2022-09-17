@@ -1,13 +1,18 @@
+use crate::auth::{account::MutationRoot, db::get_storage};
+use actix_cors::Cors;
 use actix_web::{
-    guard, http::header::HeaderMap, web, App, HttpRequest, HttpResponse, HttpServer, Result,
+    dev::ServiceRequest, guard, http::header::HeaderMap, web, App, Error, HttpRequest,
+    HttpResponse, HttpServer, Result,
+};
+use actix_web_httpauth::{
+    extractors::{basic::BasicAuth, bearer::BearerAuth, AuthenticationError},
+    middleware::HttpAuthentication,
 };
 use async_graphql::{http::GraphiQLSource, Data, Schema};
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use auth::account::{AccountSchema, QueryRoot, SubscriptionRoot};
 use config::Config;
 use log::info;
-
-use crate::auth::{account::MutationRoot, db::get_storage};
 
 mod auth;
 pub mod config;
@@ -72,7 +77,12 @@ async fn main() -> std::io::Result<()> {
     info!("GraphiQL IDE: http://{}:{}", config.host(), config.port());
     let (server_host, server_port) = { (config.host(), config.port()) };
     HttpServer::new(move || {
+        let auth = HttpAuthentication::basic(ok_validator);
         App::new()
+            .wrap(auth)
+            // ensure the CORS middleware is wrapped around the httpauth middleware so it is able to
+            // add headers to error responses
+            .wrap(Cors::permissive())
             .app_data(web::Data::new(schema.clone()))
             .app_data(config.clone())
             .service(web::resource("/").guard(guard::Get()).to(graphiql))
@@ -82,4 +92,19 @@ async fn main() -> std::io::Result<()> {
     .bind((server_host, server_port))?
     .run()
     .await
+}
+
+async fn ok_validator(
+    req: ServiceRequest,
+    credentials: BasicAuth,
+) -> Result<ServiceRequest, (Error, ServiceRequest)> {
+    eprintln!("{:?}", credentials);
+    let http_user = std::env::var("HTTP_AUTH_USER").unwrap_or("".to_string());
+    let http_pass = std::env::var("HTTP_AUTH_PASSWORD").unwrap_or("".to_string());
+    if credentials.user_id().eq(http_user.as_str()) && credentials.password().eq(&Some(http_pass.as_str())) {
+        Ok(req)
+    } else {
+        use actix_web_httpauth::headers::www_authenticate::basic::Basic;
+        Err((Error::from(AuthenticationError::new(Basic::new())), req))
+    }
 }

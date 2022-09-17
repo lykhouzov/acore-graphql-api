@@ -5,6 +5,7 @@ use futures::executor::block_on;
 use futures::lock::Mutex;
 use log::debug;
 use log::error;
+use sqlx::error::DatabaseError;
 use sqlx::MySqlPool;
 use sqlx::Row;
 use std::env;
@@ -98,12 +99,12 @@ impl AuthDB {
                 let id: u64 = row.get(0);
                 id
             })
-            .fetch_one(&self.pool)
+            .fetch_optional(&self.pool)
             .await
         {
-            Ok(id) => Ok(id > 0),
+            Ok(id) => Ok(id.is_some()),
             Err(e) => {
-                error!("{:?}", e);
+                error!("{:#?}", e);
                 Err("An error when checking an account".to_string())
             }
         }
