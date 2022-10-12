@@ -189,6 +189,17 @@ impl QueryRoot {
 
         db.has_account_username(&username).await
     }
+
+    async fn account_set_password(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        password: String,
+    ) -> Result<bool, String> {
+        let db = ctx.data_unchecked::<Storage>().lock().await;
+
+        db.set_username_password(username, password).await
+    }
 }
 
 pub struct MutationRoot;
