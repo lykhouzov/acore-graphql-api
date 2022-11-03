@@ -117,10 +117,19 @@ impl AuthDB {
         email: &str,
     ) -> Result<u64, String> {
         let username = NormalizedString::new(username).unwrap();
-        let email = NormalizedString::new(email)
-            .unwrap()
-            .to_string()
-            .to_lowercase();
+        let filtered_email: String = email
+            .chars()
+            .filter(|c| match *c {
+                'a'..='z' | 'A'..='Z' => true,
+                '0'..='9' => true,
+                '@' | '.' | '+' | '-' => true,
+                _ => false,
+            })
+            .collect();
+        if filtered_email.len() < email.len() {
+            return Err("User email has invalida characters".into());
+        }
+        let email = filtered_email;
         let (salt, verifier, username) = {
             let password = NormalizedString::new(password).unwrap();
 
@@ -234,6 +243,42 @@ impl AuthDB {
             Err(e) => {
                 error!("{:?}", e);
                 Err(format!("No characters found for the user #{}", user_id))
+            }
+        }
+    }
+
+    pub async fn set_username_password(
+        &self,
+        username: String,
+        password: String,
+    ) -> Result<bool, String> {
+        let username = NormalizedString::new(username).unwrap();
+        let (salt, verifier, username) = {
+            let password = NormalizedString::new(password).unwrap();
+
+            let verifier = SrpVerifier::from_username_and_password(username, password);
+            // Salt is randomly chosen and password_verifier depends on salt so we can't assert_eq
+            // Store these values in the database for future authentication
+            // let password_verifier = verifier.password_verifier();
+            let salt = verifier.salt();
+            (
+                salt.to_vec(),
+                verifier.password_verifier().to_vec(),
+                verifier.username().to_string(),
+            )
+        };
+        let sql = "UPDATE account SET salt = ?, verifier = ? where username = ?";
+        match sqlx::query(sql)
+            .bind(salt)
+            .bind(verifier)
+            .bind(username)
+            .execute(&self.pool)
+            .await
+        {
+            Ok(r) => Ok(r.rows_affected() > 0),
+            Err(e) => {
+                error!("{:?}", e);
+                Err("An error when setting an account password".to_string())
             }
         }
     }
